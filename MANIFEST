@@ -1,0 +1,4 @@
+MANIFEST			This file
+Makefile.PL			Makemaker makefile
+DirSelect.pm			DirSelect package
+README				General info

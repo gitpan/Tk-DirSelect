@@ -1,0 +1,19 @@
+This is the README file for Tk::DirSelect
+
+This widget allows the user to navigate drives 
+and directories and select a directory.  On Win32 
+systems, DirSelect uses the Win32API::File module 
+to obtain a list of available drives, and the 
+Tk::DirTree widget to browse them.  On Unix systems 
+it is simply a dialog box with a DirTree in it. 
+
+To use Tk::DirSelect, you will need Perl, probably
+version 5.002 or better, Tk, and Tk modules Frame, 
+Button, Radiobutton, Label, DirTree.  On Win32 systems 
+you will also need the module Win32API::File. 
+
+To build this extension, simply enter:
+
+	perl Makefile.PL
+	make
+	make install
