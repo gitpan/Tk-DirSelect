@@ -1,200 +1,293 @@
-# DirSelect: A Tk directory selection widget.
-#
-# This widget allows navigating MS Windows local and mapped network
-# drives and directories and selecting a directory.
-#
+#===============================================================================
+# Tk/DirSelect.pm
+# Copyright (C) 2000-2001 Kristi Thompson   <kristi@kristi.ca>
+# Copyright (C) 2002-2004 Michael J. Carman <mjcarman@mchsi.com>
+# Last Modified: 5/20/2004 8:31AM
+#===============================================================================
+# This is free software under the terms of the Perl Artistic License.
+#===============================================================================
+BEGIN { require 5.004 }
 
-#
-# On non-MS systems, this is simply a dialog box with a Dirtree in it.
-#
-# supercedes all versions of Win32Dirselect 
-# Usage: my $dir = $mainwindow->DirSelect->Show;
-# Options: -dir=>"directory", -w=>"width"
-# 
-# Email comments, questions or bug reports to Kristi Thompson, kristi@indexing.ca
-
-package DirSelect;
-use vars qw($VERSION);
-$VERSION = '1.03';    
-
-@EXPORT_OK = qw(glob_to_re);
-use strict;
-use English;
-require Tk::Derived;
-use vars qw(@EXPORT_OK);
-use base qw(Tk::Toplevel);
-use Tk::widgets qw(Frame Button Radiobutton Label DirTree);
+package Tk::DirSelect;
 use Cwd;
-
+use Tk::widgets qw'Frame BrowseEntry Button Label DirTree';
+use strict;
+use base 'Tk::Toplevel';
 Construct Tk::Widget 'DirSelect';
 
+use vars qw'$VERSION';
+$VERSION = '1.05';
+
+my %colors;
+my $isWin32;
+
+#-------------------------------------------------------------------------------
+# Subroutine : ClassInit()
+# Purpose    : Class initialzation.
+# Notes      : 
+#-------------------------------------------------------------------------------
+sub ClassInit {
+	my ($class, $mw) = @_;
+	$class->SUPER::ClassInit($mw);
+
+	$isWin32 = $^O eq 'MSWin32';
+
+	# Get system colors from a Text widget for use in DirTree
+	my $t = $mw->Text();
+	foreach my $x (qw'-background -selectbackground -selectforeground') {
+		$colors{$x} = $t->cget($x);
+	}
+	$t->destroy();
+}
+
+
+#-------------------------------------------------------------------------------
+# Subroutine : Populate()
+# Purpose    : Create the DirSelect widget
+# Notes      : 
+#-------------------------------------------------------------------------------
 sub Populate {
-    my($cw, $args) = @ARG;
-    $cw->SUPER::Populate($args);
-	 my $width = delete $args->{-width};
-	 my $directory = delete $args->{-dir};
-    my $top = $cw->Frame(
-	-relief  => 'groove',
-	-bd      => 2,
-    )->pack(
-	-fill    => 'x',
-	-padx    => 2,
-	-pady    => 3,
-    );
-    my $mid = $cw->Frame->pack(
-	-fill    => 'both',
-	-expand  => 1,
-    );
-    my $bottom = $cw->Frame->pack(
-	-fill    => 'x',
-	-ipady   => 6,
-    );
+	my ($w, $args) = @_;
+	my $directory  = delete $args->{-dir}   || cwd();
+	my $title      = delete $args->{-title} || 'Select Directory';
 
-    $bottom->Button(
-	-width   => 7,
-	-text    => 'OK',
-	-command => sub {$cw->{dir} = $mid->packSlaves->selectionGet()},
-    )->pack(
-	-side    => 'left',
-	-expand  => 1,
-    );
-    $bottom->Button(
-	-width   => 7,
-	-text    => 'Cancel',
-	-command => sub {$cw->{dir} = undef},
-    )->pack(
-	-side    => 'left',
-	-expand  => 1,
-    );
+    $w->withdraw;
+	$w->SUPER::Populate($args);
+	$w->ConfigSpecs(-title => ['METHOD', 'title', 'Title', $title]);
+	$w->bind('<Escape>', sub { $w->{dir} = undef });
 
-    if ($OSNAME !~ /mswin/i) {
-    	$top->packForget;
-    	my $d = $directory;
-   	$d = '/' if (!$d);
-		_dirtree($mid, $d, $width);
-    } else {	
-	require Win32API::File;					
-	my @drives = Win32API::File::getLogicalDrives();	
-	my $startdir, my $startdrive;
-	if ($directory) {
-		$startdrive = _drive($directory);
-		$startdir = $directory;}
-	else {$startdrive= _drive(cwd); $startdir = _drive(cwd);}
-	
-	my $selcolor   = $top->cget(-background);
+	my %f = (
+		drive  => $w->Frame->pack(-anchor => 'n', -fill => 'x'),
+		button => $w->Frame->pack(-side => 'bottom', -anchor => 's', -fill => 'x', -ipady  => 6),
+		tree   => $w->Frame->pack(-fill => 'both', -expand => 1),
+	);
 
-	foreach my $d (@drives) {
-	    my $drive = _drive($d);
-	    my $b = $top->Radiobutton(
-		-selectcolor => $selcolor,
-		-indicatoron => 0,
-		-text        => $drive,
-		-width       => 3,
-		-command     => [\&_browse, $mid, $d, $width],
-		-value       => $d,
-	    )->pack(
-		-side => 'left',
-		-padx => 4,
-		-pady => 6,
-	    );
-	   if (lc $startdrive eq lc $drive){
-	    	$b->invoke;
-	    	_browse($mid, $startdir, $width);
-	 	}
+	$w->{tree} = $f{tree}->Scrolled('DirTree',
+		-scrollbars       => 'osoe',
+		-selectmode       => 'single',
+		-ignoreinvoke     => 0,
+		-width            => 50,
+		-height           => 15,
+		%colors,
+		%$args,
+	)->pack(-fill => 'both', -expand => 1);
+
+	$w->{tree}->configure(-command   => sub { $w->{tree}->opencmd($_[0]) });
+	$w->{tree}->configure(-browsecmd => sub { $w->{tree}->anchorClear });
+
+	$f{button}->Button(
+		-width   => 7,
+		-text    => 'OK',
+		-command => sub { $w->{dir} = $w->{tree}->selectionGet() },
+	)->pack(-side => 'left', -expand => 1);
+
+	$f{button}->Button(
+		-width   => 7,
+		-text    => 'Cancel',
+		-command => sub { $w->{dir} = undef },
+	)->pack(-side => 'left', -expand => 1);
+
+	if ($isWin32) {
+		$f{drive}->Label(-text => 'Drive:')->pack(-side => 'left');
+		$w->{drive} = $f{drive}->BrowseEntry(
+			-variable  => \$w->{selected_drive},
+			-browsecmd => [\&_browse, $w->{tree}],
+			-state     => 'readonly',
+		)->pack(-side => 'left', -fill => 'x', -expand => 1);
 	}
-  }
+	else {
+		$f{drive}->destroy;
+	}
+	return $w;
 }
 
-sub _browse {
-    my($f, $d, $w) = @ARG;
 
-    foreach ($f->packSlaves) {$_->packForget;}
-
-    my %drives = (
-	0 => 'Unknown',		1 => 'No root drive',	2 => 'Removable disk drive',
-	3 => 'Fixed disk drive',4 => 'Network drive',	5 => 'CD-Rom drive',
-	6 => 'RAM Disk'
-    );
-
-    my $drive = _drive($d);
-    if (chdir($drive)) {
-	my $volumelabel;
-	Win32API::File::GetVolumeInformation($drive, $volumelabel, [], [], [], [], [], []);
-	my $drivetype = Win32API::File::GetDriveType($drive);
-	_drivelabel($f, "$volumelabel ($drive) $drives{$drivetype}");
-	_dirtree($f, $d, $w);
-    } else {
-	_drivelabel($f, "$drive is not available.");
-    }
-}
-
-sub _dirtree {
-    my($f, $d, $w) = @ARG;
-    chdir $d;    
-    my $dt = $f->Scrolled('DirTree',
-		-scrollbars => 'osoe',
-		-directory  => $d,
-		-selectmode =>'browse',
-		-ignoreinvoke =>0,		
-		-background => 'white',
-		-selectbackground => "gray61",
-		-selectforeground => "white",		
-		-width 		=> $w
-		)->pack(
-			-fill   => 'both',
-			-expand => 1,
-			-pady   => 4,
-    		);
-    $dt->configure(-command    => sub { $dt->opencmd($_[0]) });
-    $dt->configure(-browsecmd  => sub { $dt->anchorClear });
-}
-
+#-------------------------------------------------------------------------------
+# Subroutine : Show()
+# Purpose    : Display the DirSelect widget.
+# Notes      : 
+#-------------------------------------------------------------------------------
 sub Show {
-    my($cw, $grab) = @ARG;
-    my $old_focus = $cw->focusSave;
-    my $old_grab  = $cw->grabSave;
-    $cw->Popup();
-    Tk::catch {
-	if (defined($grab) and length($grab) and $grab =~ /global/i) {
-	    $cw->grabGlobal;
-	} else {
-	    $cw->grab;
+	my $w     = shift;
+	my $cwd   = cwd();
+	my $dir   = shift || $cwd;
+	my $focus = $w->focusSave;
+	my $grab  = $w->grabSave;
+
+	chdir($dir);
+
+	if ($isWin32) {
+		# populate the drive list
+		my @drives = _get_volume_info();
+		$w->{drive}->delete(0, 'end');
+		my $startdrive = _drive($dir);
+
+		foreach my $d (@drives) {
+			$w->{drive}->insert('end', $d);
+			if ($startdrive eq _drive($d)) {
+				$w->{selected_drive} = $d;
+			}
+		}
+
+		# show initial directory
+		_browse($w->{tree}, undef, $dir);
 	}
-    };
-    $cw->focus;
-    $cw->_wait;
-    &$old_focus;
-    &$old_grab;
-    return($cw->{dir});
+	else {
+		# show initial directory
+		_showdir($w->{tree}, $dir);
+	}
+
+	$w->Popup();                  # show widget
+	$w->focus;                    # seize focus
+	$w->grab;                     # seize grab
+	$w->waitVariable(\$w->{dir}); # wait for user selection (or cancel)
+	$w->grabRelease;              # release grab
+	$w->withdraw;                 # run and hide
+	$focus->();                   # restore prior focus
+	$grab->();                    # restore prior grab
+	chdir($cwd)                   # restore working directory
+		or warn "Could not chdir() back to '$cwd' [$!]\n";
+
+	# HList SelectionGet() behavior changed around Tk 804.025
+	if (ref $w->{dir} eq 'ARRAY') {
+		$w->{dir} = $w->{dir}[0];
+	}
+
+	{
+		local $^W;
+		$w->{dir} .= '/' if ($isWin32 && $w->{dir} =~ /:$/);
+	}
+
+	return $w->{dir};
 }
 
-sub _drivelabel {
-    my($f, $msg) = @ARG;
-    $f->Label(
-	-text   => " $msg",
-	-relief => 'sunken',
-	-bd     => 1,
-	-anchor => 'w',
-    )->pack(
-	-padx   => 2,
-	-fill   => 'x',
-	-ipady  => 2,
-    );
+
+#-------------------------------------------------------------------------------
+# Subroutine : _browse()
+# Purpose    : Browse to a mounted filesystem (Win32)
+# Notes      : 
+#-------------------------------------------------------------------------------
+sub _browse {
+	my ($w, undef, $d) = @_;
+	_showdir($w, _drive($d));
 }
 
+
+#-------------------------------------------------------------------------------
+# Subroutine : _showdir()
+# Purpose    : Show the requested directory
+# Notes      : 
+#-------------------------------------------------------------------------------
+sub _showdir {
+	my $w   = shift;
+	my $dir = shift;
+	$w->delete('all');
+	$w->chdir($dir);
+}
+
+
+#-------------------------------------------------------------------------------
+# Subroutine : _get_volume_info()
+# Purpose    : Get volume information (Win32)
+# Notes      : 
+#-------------------------------------------------------------------------------
+sub _get_volume_info {
+	require Win32API::File;
+
+	my @drivetype = (
+		'Unknown',
+		'No root directory',
+		'Removable disk drive',
+		'Fixed disk drive',
+		'Network drive',
+		'CD-ROM drive',
+		'RAM Disk',
+	);
+
+	my @drives;
+	foreach my $ld (Win32API::File::getLogicalDrives()) {
+		my $drive = _drive($ld);
+		my $type  = $drivetype[Win32API::File::GetDriveType($drive)];
+		my $label;
+
+		Win32API::File::GetVolumeInformation(
+			$drive, $label, [], [], [], [], [], []);
+
+		push @drives, "$drive  [$label] $type";
+	}
+
+	return @drives;
+}
+
+
+#-------------------------------------------------------------------------------
+# Subroutine : _drive()
+# Purpose    : Get the drive letter (Win32)
+# Notes      : 
+#-------------------------------------------------------------------------------
 sub _drive {
-    shift =~ /^(.*:)/;
-    return($1);
+	shift =~ /^(\w:)/;
+	return uc $1;
 }
 
-
-
-sub _wait {
-    my($cw) = @ARG;
-    $cw->waitVariable(\$cw->{dir});
-    $cw->grabRelease;
-    $cw->withdraw;
-    $cw->Callback(-command => $cw->{dir});
-}
 
 1;
+
+__END__
+=pod
+
+=head1 NAME
+
+Tk::DirSelect - Cross-platform directory selection widget.
+
+=head1 SYNOPSIS
+
+  use Tk::DirSelect;
+  my $ds  = $mw->DirSelect();
+  my $dir = $ds->Show();
+
+=head1 DESCRIPTION
+
+This module provides a cross-platform directory selection widget. For 
+systems running Microsoft Windows, this includes selection of local and 
+mapped network drives.
+
+=head1 METHODS
+
+=head2 C<DirSelect([-title =E<gt> 'title'], [options])>
+
+Constructs a new DirSelect widget as a child of the invoking object 
+(usually a MainWindow). 
+
+The title for the widget can be set by specifying C<-title =E<gt> 
+'Title'>. Any other options provided will be passed through to the 
+DirTree widget that displays directories, so be sure they're appropriate 
+(e.g. C<-width>)
+
+=head2 C<Show([directory])>
+
+Displays the DirSelect widget and returns the user selected directory or 
+C<undef> if the operation is canceled.
+
+Takes one optional argument -- the initial directory to display. If not 
+specified, the current directory will be used instead.
+
+=head1 DEPENDENCIES
+
+=over 4
+
+=item * Perl 5.004
+
+=item * Win32API::File (under Microsoft Windows only)
+
+=back
+
+=head1 AUTHOR
+
+Original author Kristi Thompson <kristi@kristi.ca>
+
+Current maintainer Michael J. Carman <mjcarman@mchsi.com>
+
+This is free software under the terms of the Perl Artistic License.
+
+=cut
